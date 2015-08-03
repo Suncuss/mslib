@@ -146,45 +146,53 @@ int main(int argc, char **argv){
         AtomPointerVector ip_helix_ca = ip_helix_sl.select("target_bb, name CA");
 
         // Read in the polyG helix
-        System pf_helix;
-        if(!pf_helix.readPdb(opt.helixFile)){
+        System pf_helix_monomer_A;
+        if(!pf_helix_monomer_A.readPdb(opt.helixFile)){
                 cerr << "Fail to read file: " << "XXX" << endl;
         }
-        AtomPointerVector chainA = pf_helix.getAtomPointers();
-        pf_helix.saveCoor("initialState");
+        System pf_helix_monomer_B(pf_helix_monomer_A.getAtomPointers());
+        AtomPointerVector tmp = pf_helix_monomer_B.getAtomPointers();
+        for(int i = 0; i < tmp.size(); i++){
+                tmp[i]->setChainId("B"); 
+        }
 
+        // Setup the System for Perfect Dimer
+        System pf_helix_dimer(pf_helix_monomer_A.getAtomPointers()+pf_helix_monomer_B.getAtomPointers());
+        AtomPointerVector pf_helix_dimer_atoms = pf_helix_dimer.getAtomPointers();
+        AtomSelection pf_helix_dimer_sl(pf_helix_dimer_atoms);
+        AtomPointerVector chainA = pf_helix_dimer_sl.select("ref_chain_A, chain A");
+        AtomPointerVector chainB = pf_helix_dimer_sl.select("ref_chain_B, chain B");
+        AtomPointerVector pf_helix_dimer_ca = pf_helix_dimer_sl.select("ref_bb, name CA");
+        
+        pf_helix_dimer.saveCoor("initialState");
 
         // Axial Rotation Loop
         for(double axialRot = opt.axialRotStart; axialRot < opt.axialRotEnd; axialRot += opt.axialRotSteps){
                 // Z Shift Loop
                 for(double zShift = opt.zShiftStart; zShift < opt.zShiftEnd; zShift += opt.zShiftSteps){
-                        pf_helix.applySavedCoor("initialState");
+                        pf_helix_dimer.applySavedCoor("initialState");
                         trans.rotate(chainA,axialRot,origin,zAxis);
+                        trans.rotate(chainB,axialRot,origin,zAxis);
                         trans.Ztranslate(chainA,zShift);
-                        pf_helix.saveCoor("AxialZState");
+                        trans.Ztranslate(chainB,zShift);
+                        pf_helix_dimer.saveCoor("AxialZState");
                         // Crossing Angle Loop
                         for(double crossingAngle = opt.crossingAngleStart/2; crossingAngle < opt.crossingAngleEnd/2; crossingAngle += opt.crossingAngleSteps){
-                                pf_helix.applySavedCoor("AxialZState");
-                                trans.rotate(chainA, crossingAngle,origin,xAxis);
-                                pf_helix.saveCoor("crossingAngleState");
+                                pf_helix_dimer.applySavedCoor("AxialZState");
+                                trans.rotate(chainA,crossingAngle,origin,xAxis);
+                                trans.rotate(chainB,crossingAngle,origin,xAxis);
+                                pf_helix_dimer.saveCoor("crossingAngleState");
                                 // X Shift Loop
                                 for(double xShift = opt.xShiftStart; xShift < opt.xShiftEnd; xShift += opt.xShiftSteps){
-                                        pf_helix.applySavedCoor("crossingAngleState");
+                                        pf_helix_dimer.applySavedCoor("crossingAngleState");
                                         trans.Xtranslate(chainA,0.5*xShift);
-                                        // Creat Chain B
-                                        System yetAnother_pf_helix(chainA);
-                                        AtomPointerVector chainB = yetAnother_pf_helix.getAtomPointers();
+                                        trans.Xtranslate(chainB,0.5*xShift);
+                                        // Rotate chain B by 180 to set the symmetry
                                         trans.Zrotate180(chainB);
-                                        for(int i = 0; i < chainB.size(); i++){
-                                                chainB[i]->setChainId("B");
-                                        }
-                                        System model(chainA+chainB);
-                                        AtomSelection model_sl(model.getAtomPointers());
-                                        AtomPointerVector model_ca = model_sl.select("reference_bb, name CA");
                                         // RMSD Alignment
-                                        trans.rmsdAlignment(model_ca,ip_helix_ca,model.getAtomPointers());
+                                        trans.rmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
                                         // Store Possible Solutions
-                                        solutions.push_back(Solution {ip_helix_ca.rmsd(model_ca),axialRot,zShift,crossingAngle,xShift});
+                                        solutions.push_back(Solution {ip_helix_ca.rmsd(pf_helix_dimer_ca),axialRot,zShift,crossingAngle,xShift});
 
                                 }
                         }
@@ -209,27 +217,23 @@ int main(int argc, char **argv){
 
         // Generate the best solution
         Solution bestSolution = solutions.front();
-        pf_helix.applySavedCoor("initialState");
+        pf_helix_dimer.applySavedCoor("initialState");
         trans.rotate(chainA,bestSolution.axialRot,origin,zAxis);
+        trans.rotate(chainB,bestSolution.axialRot,origin,zAxis);
         trans.Ztranslate(chainA,bestSolution.zShift);
-        trans.rotate(chainA, bestSolution.crossingAngle,origin,xAxis);
+        trans.Ztranslate(chainB,bestSolution.zShift);
+        trans.rotate(chainA,bestSolution.crossingAngle,origin,xAxis);
+        trans.rotate(chainB,bestSolution.crossingAngle,origin,xAxis);
         trans.Xtranslate(chainA,0.5*bestSolution.xShift);
-        System yetAnother_pf_helix(chainA);
-        AtomPointerVector chainB = yetAnother_pf_helix.getAtomPointers();
-        trans.Zrotate180(chainB);
-        for(int i = 0; i < chainB.size(); i++){
-                chainB[i]->setChainId("B");
-        }
-        System bestModel(chainA+chainB);
+        trans.Xtranslate(chainB,0.5*bestSolution.xShift);
+        trans.Zrotate180(chainB); 
         string bestModelFileName = opt.outputDir + "/best_model.pdb";
-        bestModel.writePdb(bestModelFileName);
-        AtomSelection bestModel_sl(bestModel.getAtomPointers());
-        AtomPointerVector bestModel_ca = bestModel_sl.select("best_model_bb, name CA");
+        pf_helix_dimer.writePdb(bestModelFileName);
 
-        trans.rmsdAlignment(bestModel_ca,ip_helix_ca,bestModel.getAtomPointers());
+        trans.rmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
 
         string bestAlignmentFileName = opt.outputDir + "/best_alignment.pdb";
-        bestModel.writePdb(bestAlignmentFileName);
+        pf_helix_dimer.writePdb(bestAlignmentFileName);
 
                                 
         time(&endTime);
