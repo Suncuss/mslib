@@ -165,28 +165,56 @@ int main(int argc, char **argv){
         AtomPointerVector pf_helix_dimer_ca = pf_helix_dimer_sl.select("ref_bb, name CA");
         
         pf_helix_dimer.saveCoor("initialState");
-
+        
+        // Save Coor for Atoms
+        int chain_size = chainA.size();
+        vector<double> atoms_x_init(chain_size); vector<double> atoms_y_init(chain_size); vector<double> atoms_z_init(chain_size);
+        vector<double> atoms_x_axialZ(chain_size); vector<double> atoms_y_axialZ(chain_size); vector<double> atoms_z_axialZ(chain_size);
+        vector<double> atoms_x_crossing(chain_size); vector<double> atoms_y_crossing(chain_size); vector<double> atoms_z_crossing(chain_size);       
+        for(int i = 0; i < chain_size; i++){
+                Atom * atom = chainA[i];
+                atoms_x_init[i] = atom->getX();
+                atoms_y_init[i] = atom->getY();
+                atoms_z_init[i] = atom->getZ();
+        }
         // Axial Rotation Loop
         for(double axialRot = opt.axialRotStart; axialRot < opt.axialRotEnd; axialRot += opt.axialRotSteps){
                 // Z Shift Loop
                 for(double zShift = opt.zShiftStart; zShift < opt.zShiftEnd; zShift += opt.zShiftSteps){
-                        pf_helix_dimer.applySavedCoor("initialState");
+                        for(int i = 0; i < chain_size; i++){
+                                chainA[i]->setCoor(atoms_x_init[i],atoms_y_init[i],atoms_z_init[i]);
+                        }
                         trans.rotate(chainA,axialRot,origin,zAxis);
-                        trans.rotate(chainB,axialRot,origin,zAxis);
                         trans.Ztranslate(chainA,zShift);
-                        trans.Ztranslate(chainB,zShift);
-                        pf_helix_dimer.saveCoor("AxialZState");
+                        for(int i = 0; i < chain_size; i++){
+                                Atom * atom = chainA[i];
+                                atoms_x_axialZ[i] = atom->getX();
+                                atoms_y_axialZ[i] = atom->getY();
+                                atoms_z_axialZ[i] = atom->getZ();
+                        }
                         // Crossing Angle Loop
                         for(double crossingAngle = opt.crossingAngleStart/2; crossingAngle < opt.crossingAngleEnd/2; crossingAngle += opt.crossingAngleSteps){
-                                pf_helix_dimer.applySavedCoor("AxialZState");
+                                for(int i = 0; i < chain_size; i++){
+                                        chainA[i]->setCoor(atoms_x_axialZ[i],atoms_y_axialZ[i],atoms_z_axialZ[i]);
+                                }
                                 trans.rotate(chainA,crossingAngle,origin,xAxis);
-                                trans.rotate(chainB,crossingAngle,origin,xAxis);
-                                pf_helix_dimer.saveCoor("crossingAngleState");
+                                for(int i = 0; i < chain_size; i++){
+                                        Atom * atom = chainA[i];
+                                        atoms_x_crossing[i] = atom->getX();
+                                        atoms_y_crossing[i] = atom->getY();
+                                        atoms_z_crossing[i] = atom->getZ();
+                                }
                                 // X Shift Loop
                                 for(double xShift = opt.xShiftStart; xShift < opt.xShiftEnd; xShift += opt.xShiftSteps){
-                                        pf_helix_dimer.applySavedCoor("crossingAngleState");
+                                        for(int i = 0; i < chain_size; i++){
+                                               chainA[i]->setCoor(atoms_x_crossing[i],atoms_y_crossing[i],atoms_z_crossing[i]);   
+                                        }
                                         trans.Xtranslate(chainA,0.5*xShift);
-                                        trans.Xtranslate(chainB,0.5*xShift);
+                                        // Apply the same Transfromations on chian B
+                                        for(int i=0; i < chain_size; i++){
+                                                Atom * atom = chainA[i];
+                                                chainB[i]->setCoor(atom->getX(),atom->getY(),atom->getZ());
+                                        }
                                         // Rotate chain B by 180 to set the symmetry
                                         trans.Zrotate180(chainB);
                                         // RMSD Alignment
