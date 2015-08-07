@@ -266,8 +266,8 @@ int main(int argc, char **argv){
         trans.rotate(chainB,bestSolution.axialRot,origin,zAxis);
         trans.Ztranslate(chainA,bestSolution.zShift);
         trans.Ztranslate(chainB,bestSolution.zShift);
-        trans.rotate(chainA,bestSolution.crossingAngle,origin,xAxis);
-        trans.rotate(chainB,bestSolution.crossingAngle,origin,xAxis);
+        trans.rotate(chainA,bestSolution.crossingAngle/2,origin,xAxis);
+        trans.rotate(chainB,bestSolution.crossingAngle/2,origin,xAxis);
         trans.Xtranslate(chainA,0.5*bestSolution.xShift);
         trans.Xtranslate(chainB,0.5*bestSolution.xShift);
         trans.Zrotate180(chainB); 
