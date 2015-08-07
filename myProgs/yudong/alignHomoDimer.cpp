@@ -15,8 +15,8 @@ using namespace MSL;
 
 
 string programName = "alignHomoDimer";
-string programDescription = "This program creates helix dimers of specified geometries and find the one that has the smallest RMSD value after align with the given target helix.";
-string programAuthor = "Yudong Sun and Samantha Anderson";
+string programDescription = "This program creates  perfect helix dimers of specified geometries and then find the one that has the smallest RMSD value after align with the given imperfect helix.";
+string programAuthor = "Yudong Sun, Samantha Anderson and Samson Condon";
 string programVersion = "0.0.1";
 string programDate = "31 July 2015";
 string mslVersion =  MSLVERSION;
@@ -132,76 +132,91 @@ int main(int argc, char **argv){
 	printOptions(opt);
 
         
-        // Setup Transfroms
+        // Setup transfroms
         CartesianPoint origin(0.0,0.0,0.0);
         CartesianPoint xAxis(1.0,0.0,0.0);
         CartesianPoint yAxis(0.0,1.0,1.0);
         CartesianPoint zAxis(0.0,0.0,1.0);
         Transforms trans;
 
-        // Read in the target helix 
-        System ip_helix;
-        if(!ip_helix.readPdb(opt.pdbFile)){
+        // Read in the imperfect helix 
+        System imperfectHelix;
+        if(!imperfectHelix.readPdb(opt.pdbFile)){
                 cerr << "Fail to read the file: " << opt.pdbFile << endl;
-                exit(-1);
+                exit(1);
         }
-        AtomSelection ip_helix_sl(ip_helix.getAtomPointers());
+        AtomSelection imperfectHelixSelection(imperfectHelix.getAtomPointers());
         char targetSelString[100]; sprintf(targetSelString, "target_bb, name CA and resi %d-%d", opt.startResNum, opt.endResNum);
-        AtomPointerVector ip_helix_ca = ip_helix_sl.select(targetSelString);
+        AtomPointerVector imperfectHelixCA = imperfectHelixSelection.select(targetSelString);
 
-        // Read in the polyG helix
-        System pf_helix;
-        if(!pf_helix.readPdb(opt.helixFile)){
+        // Read in the 69-polyG perfect helix
+        System perfectHelix;
+        if(!perfectHelix.readPdb(opt.helixFile)){
                 cerr << "Fail to read file: " << opt.helixFile << endl;
-                exit(-1);
+                exit(1);
         }
-        AtomSelection pf_helix_sl(pf_helix.getAtomPointers());
+        AtomSelection perfectHelixSelection(perfectHelix.getAtomPointers());
+        
+        // Cut the perfect helix into the same length as the imperfect helix
         unsigned int helixLength = opt.endResNum - opt.startResNum + 1;
         if(helixLength > 69){
                 cerr << "Helix length exceeds 69 - Tooooooo long >_< " << endl;
-                exit(0);
+                exit(1);
         }
         unsigned int startRes, endRes;
         if( helixLength % 2 != 0){
                 startRes = 35 - helixLength / 2; endRes = 35 + helixLength / 2; 
         }
+
+        // When the desired length is not a odd number, the first half part will have one more resi than the second half of the helix
         else {
                 startRes = 35 - helixLength / 2; endRes = 35 + helixLength / 2 - 1;
         }
+
         char refSelString[100]; 
         sprintf(refSelString, "ref, resi %d-%d", startRes,endRes);
-        System pf_helix_dimer(pf_helix_sl.select(refSelString));
+        System perfectHelixDimer(perfectHelixSelection.select(refSelString));
+        AtomPointerVector perfectHelixDimerAtoms = perfectHelixDimer.getAtomPointers();
+        AtomSelection perfectHelixDimerSelection(perfectHelixDimerAtoms);
+        AtomPointerVector chainA = perfectHelixDimerSelection.select("ref_chain_A, chain A");
+        AtomPointerVector chainB = perfectHelixDimerSelection.select("ref_chain_B, chain B");
+        AtomPointerVector perfectHelixDimerCA = perfectHelixDimerSelection.select("ref_bb, name CA");
+        
+        
+        // Save the initial state of the system for later use
+        perfectHelixDimer.saveCoor("initialState");
 
-        // Setup the System for Perfect Dimer
-        AtomPointerVector pf_helix_dimer_atoms = pf_helix_dimer.getAtomPointers();
-        AtomSelection pf_helix_dimer_sl(pf_helix_dimer_atoms);
-        AtomPointerVector chainA = pf_helix_dimer_sl.select("ref_chain_A, chain A");
-        AtomPointerVector chainB = pf_helix_dimer_sl.select("ref_chain_B, chain B");
-        AtomPointerVector pf_helix_dimer_ca = pf_helix_dimer_sl.select("ref_bb, name CA");
         
-        pf_helix_dimer.saveCoor("initialState");
-        
-        // Save Coor for Atoms
-        int chain_size = chainA.size();
+        // Save coor for atoms manually to avoid string compare for better performance
+        // Declare containers for atom's coor
+        unsigned int chain_size = chainA.size();
         vector<double> atoms_x_init(chain_size); vector<double> atoms_y_init(chain_size); vector<double> atoms_z_init(chain_size);
         vector<double> atoms_x_axialZ(chain_size); vector<double> atoms_y_axialZ(chain_size); vector<double> atoms_z_axialZ(chain_size);
-        vector<double> atoms_x_crossing(chain_size); vector<double> atoms_y_crossing(chain_size); vector<double> atoms_z_crossing(chain_size);       
+        vector<double> atoms_x_crossing(chain_size); vector<double> atoms_y_crossing(chain_size); vector<double> atoms_z_crossing(chain_size);        
         for(int i = 0; i < chain_size; i++){
                 Atom * atom = chainA[i];
                 atoms_x_init[i] = atom->getX();
                 atoms_y_init[i] = atom->getY();
                 atoms_z_init[i] = atom->getZ();
         }
-        //TODO  CHECK RANGE OF START AND END
+        
+        // Check the range of parameter before do the real stuff 
+        if(opt.axialRotStart > opt.axialRotEnd || opt.zShiftStart > opt.zShiftEnd || opt.crossingAngleStart > opt.crossingAngleEnd || opt.xShiftStart > opt.xShiftEnd){
+                cerr << "Erroooooor: Range of parameters makes zero sense ~!" << endl;
+                exit(1);
+        }
+
         // Axial Rotation Loop
         for(double axialRot = opt.axialRotStart; axialRot < opt.axialRotEnd; axialRot += opt.axialRotSteps){
                 // Z Shift Loop
                 for(double zShift = opt.zShiftStart; zShift < opt.zShiftEnd; zShift += opt.zShiftSteps){
+                        // Apply saved coor "initialState"
                         for(int i = 0; i < chain_size; i++){
                                 chainA[i]->setCoor(atoms_x_init[i],atoms_y_init[i],atoms_z_init[i]);
                         }
                         trans.rotate(chainA,axialRot,origin,zAxis);
                         trans.Ztranslate(chainA,zShift);
+                        // Save coor after transformation
                         for(int i = 0; i < chain_size; i++){
                                 Atom * atom = chainA[i];
                                 atoms_x_axialZ[i] = atom->getX();
@@ -234,24 +249,22 @@ int main(int argc, char **argv){
                                         // Rotate chain B by 180 to set the symmetry
                                         trans.Zrotate180(chainB);
                                         // RMSD Alignment
-                                        trans.slientRmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
+                                        trans.slientRmsdAlignment(perfectHelixDimerCA,imperfectHelixCA,perfectHelixDimerAtoms);
                                         // Store Possible Solutions
-                                        solutions.push_back(Solution {ip_helix_ca.rmsd(pf_helix_dimer_ca),axialRot,zShift,crossingAngle,xShift});
-
+                                        solutions.push_back(Solution {imperfectHelixCA.rmsd(perfectHelixDimerCA),axialRot,zShift,crossingAngle,xShift});
                                 }
                         }
                 }
         }
 
-        // Sort Solutions
+        // Sort all the solutions
         sort(solutions.begin(),solutions.end());
-        
-
-        // Redirect Output
+       
+        // Redirect output
         string outputFileName = opt.outputDir + "/" + opt.output;
         if(!freopen(outputFileName.c_str(), "w", stdout)){
                 cerr << "ERROR_freopen: Did not open output file " << opt.output << endl;
-		exit(0);
+		exit(1);
 	}
  
         // Print RMSD info
@@ -259,9 +272,9 @@ int main(int argc, char **argv){
                 cout << "RMSD: " << solutions[i].rmsd << "\tPARAMETERS: " << printInfo(solutions[i]) << endl;
         }
 
-        // Generate the best solution
+        // Generate pdb files for the best solution
         Solution bestSolution = solutions.front();
-        pf_helix_dimer.applySavedCoor("initialState");
+        perfectHelixDimer.applySavedCoor("initialState");
         trans.rotate(chainA,bestSolution.axialRot,origin,zAxis);
         trans.rotate(chainB,bestSolution.axialRot,origin,zAxis);
         trans.Ztranslate(chainA,bestSolution.zShift);
@@ -272,12 +285,10 @@ int main(int argc, char **argv){
         trans.Xtranslate(chainB,0.5*bestSolution.xShift);
         trans.Zrotate180(chainB); 
         string bestModelFileName = opt.outputDir + "/best_model.pdb";
-        pf_helix_dimer.writePdb(bestModelFileName);
-
-        trans.slientRmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
-
+        perfectHelixDimer.writePdb(bestModelFileName);
+        trans.slientRmsdAlignment(perfectHelixDimerCA,imperfectHelixCA,perfectHelixDimerAtoms);
         string bestAlignmentFileName = opt.outputDir + "/best_alignment.pdb";
-        pf_helix_dimer.writePdb(bestAlignmentFileName);
+        perfectHelixDimer.writePdb(bestAlignmentFileName);
 
                                 
         time(&endTime);
@@ -525,6 +536,7 @@ void version() {
 void help(Options defaults) {
 	cout << "This program runs as:" << endl;
 	cout << " % alignHomoDimer --pdbFile <pdbfile> --helixFile <filename> --output <filename>" << endl;
+        cout << " --startResNum <int> --endResNum <int>" << endl;
 	cout << " --xShiftStart <double> --xShiftEnd <double> --xShiftSteps <double> " << endl;
 	cout << " --zShiftStart <double> --zShiftEnd <double> --zShiftSteps <double> " << endl;
 	cout << " --axialRotStart <double> --axialRotEnd <double> --axialRotSteps <double> " << endl;
