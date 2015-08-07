@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
+#include <string>
 #include "System.h"
 #include "MslTools.h"
 #include "Transforms.h"
@@ -90,6 +91,8 @@ void printOptions(Options& _opt) {
         cout << "helixFile          " <<  _opt.helixFile << endl;
 	cout << "output             " <<  _opt.output << endl;
         cout << "outputDir          " <<  _opt.outputDir << endl;
+        cout << "startResNum        " <<  _opt.startResNum << endl;
+        cout << "endResNum          " <<  _opt.endResNum << endl;
 	cout << "xShiftStart        " <<  _opt.xShiftStart << endl;
 	cout << "zShiftStart        " <<  _opt.zShiftStart << endl;
 	cout << "axialRotStart      " <<  _opt.axialRotStart << endl;
@@ -129,8 +132,7 @@ int main(int argc, char **argv){
 	printOptions(opt);
 
         
-        // Declare system
-
+        // Setup Transfroms
         CartesianPoint origin(0.0,0.0,0.0);
         CartesianPoint xAxis(1.0,0.0,0.0);
         CartesianPoint yAxis(0.0,1.0,1.0);
@@ -141,23 +143,36 @@ int main(int argc, char **argv){
         System ip_helix;
         if(!ip_helix.readPdb(opt.pdbFile)){
                 cerr << "Fail to read the file: " << opt.pdbFile << endl;
+                exit(-1);
         }
         AtomSelection ip_helix_sl(ip_helix.getAtomPointers());
-        AtomPointerVector ip_helix_ca = ip_helix_sl.select("target_bb, name CA");
+        char targetSelString[100]; sprintf(targetSelString, "target_bb, name CA and resi %d-%d", opt.startResNum, opt.endResNum);
+        AtomPointerVector ip_helix_ca = ip_helix_sl.select(targetSelString);
 
         // Read in the polyG helix
-        System pf_helix_monomer_A;
-        if(!pf_helix_monomer_A.readPdb(opt.helixFile)){
-                cerr << "Fail to read file: " << "XXX" << endl;
+        System pf_helix;
+        if(!pf_helix.readPdb(opt.helixFile)){
+                cerr << "Fail to read file: " << opt.helixFile << endl;
+                exit(-1);
         }
-        System pf_helix_monomer_B(pf_helix_monomer_A.getAtomPointers());
-        AtomPointerVector tmp = pf_helix_monomer_B.getAtomPointers();
-        for(int i = 0; i < tmp.size(); i++){
-                tmp[i]->setChainId("B"); 
+        AtomSelection pf_helix_sl(pf_helix.getAtomPointers());
+        unsigned int helixLength = opt.endResNum - opt.startResNum + 1;
+        if(helixLength > 69){
+                cerr << "Helix length exceeds 69 - Tooooooo long >_< " << endl;
+                exit(0);
         }
+        unsigned int startRes, endRes;
+        if( helixLength % 2 != 0){
+                startRes = 35 - helixLength / 2; endRes = 35 + helixLength / 2; 
+        }
+        else {
+                startRes = 35 - helixLength / 2; endRes = 35 + helixLength / 2 - 1;
+        }
+        char refSelString[100]; 
+        sprintf(refSelString, "ref, resi %d-%d", startRes,endRes);
+        System pf_helix_dimer(pf_helix_sl.select(refSelString));
 
         // Setup the System for Perfect Dimer
-        System pf_helix_dimer(pf_helix_monomer_A.getAtomPointers()+pf_helix_monomer_B.getAtomPointers());
         AtomPointerVector pf_helix_dimer_atoms = pf_helix_dimer.getAtomPointers();
         AtomSelection pf_helix_dimer_sl(pf_helix_dimer_atoms);
         AtomPointerVector chainA = pf_helix_dimer_sl.select("ref_chain_A, chain A");
@@ -177,6 +192,7 @@ int main(int argc, char **argv){
                 atoms_y_init[i] = atom->getY();
                 atoms_z_init[i] = atom->getZ();
         }
+        //TODO  CHECK RANGE OF START AND END
         // Axial Rotation Loop
         for(double axialRot = opt.axialRotStart; axialRot < opt.axialRotEnd; axialRot += opt.axialRotSteps){
                 // Z Shift Loop
@@ -193,11 +209,11 @@ int main(int argc, char **argv){
                                 atoms_z_axialZ[i] = atom->getZ();
                         }
                         // Crossing Angle Loop
-                        for(double crossingAngle = opt.crossingAngleStart/2; crossingAngle < opt.crossingAngleEnd/2; crossingAngle += opt.crossingAngleSteps){
+                        for(double crossingAngle = opt.crossingAngleStart; crossingAngle < opt.crossingAngleEnd; crossingAngle += opt.crossingAngleSteps){
                                 for(int i = 0; i < chain_size; i++){
                                         chainA[i]->setCoor(atoms_x_axialZ[i],atoms_y_axialZ[i],atoms_z_axialZ[i]);
                                 }
-                                trans.rotate(chainA,crossingAngle,origin,xAxis);
+                                trans.rotate(chainA,crossingAngle/2.0,origin,xAxis);
                                 for(int i = 0; i < chain_size; i++){
                                         Atom * atom = chainA[i];
                                         atoms_x_crossing[i] = atom->getX();
@@ -218,7 +234,7 @@ int main(int argc, char **argv){
                                         // Rotate chain B by 180 to set the symmetry
                                         trans.Zrotate180(chainB);
                                         // RMSD Alignment
-                                        trans.rmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
+                                        trans.slientRmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
                                         // Store Possible Solutions
                                         solutions.push_back(Solution {ip_helix_ca.rmsd(pf_helix_dimer_ca),axialRot,zShift,crossingAngle,xShift});
 
@@ -258,7 +274,7 @@ int main(int argc, char **argv){
         string bestModelFileName = opt.outputDir + "/best_model.pdb";
         pf_helix_dimer.writePdb(bestModelFileName);
 
-        trans.rmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
+        trans.slientRmsdAlignment(pf_helix_dimer_ca,ip_helix_ca,pf_helix_dimer_atoms);
 
         string bestAlignmentFileName = opt.outputDir + "/best_alignment.pdb";
         pf_helix_dimer.writePdb(bestAlignmentFileName);
@@ -320,9 +336,11 @@ Options parseOptions(int _argc, char * _argv[], Options defaults) {
 	opt.required.push_back("crossingAngleStart");
 	opt.required.push_back("crossingAngleEnd");
 	opt.required.push_back("crossingAngleSteps");
+        opt.required.push_back("startResNum");
+        opt.required.push_back("endResNum");
 
 	opt.allowed.push_back("configfile");
-
+        
 
 	OptionParser OP;
 	OP.setShortOptionEquivalent(opt.equivalent);
@@ -405,14 +423,13 @@ Options parseOptions(int _argc, char * _argv[], Options defaults) {
         }
 	opt.startResNum = OP.getInt("startResNum");
 	if (OP.fail()) {
-		opt.startResNum = 1;
-		opt.warningMessages += "starting residue number not specified; defaulting to 1";
-		opt.warningFlag = true;
+		opt.warningMessages += "startResNum not specified";
+		opt.errorFlag = true;
 	}
        	opt.endResNum = OP.getInt("endResNum");
 	if (OP.fail()) {
 		opt.warningMessages += "ending residue number not specified";
-		opt.warningFlag = true;
+		opt.errorFlag = true;
 	}
 	opt.output = OP.getString("output");
 	if (OP.fail()) {
